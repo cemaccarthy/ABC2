@@ -1,0 +1,940 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>FretScore — ABC Tablature Studio</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    margin: 0; background: #1e1e24; color: #e8e8e8;
+    display: flex; flex-direction: column; min-height: 100vh;
+  }
+  header {
+    background: #2a2a33; padding: 12px 20px; border-bottom: 1px solid #3a3a44;
+    display: flex; align-items: center; gap: 20px; flex-wrap: wrap;
+  }
+  header h1 { margin: 0; font-size: 1.3em; color: #ffb86b; }
+  .controls { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  select, button, label {
+    background: #3a3a44; color: #e8e8e8; border: 1px solid #4a4a54;
+    padding: 6px 10px; border-radius: 4px; font-size: 13px; cursor: pointer;
+  }
+  button:hover { background: #4a4a54; }
+  button.primary { background: #ffb86b; color: #1e1e24; border-color: #ffb86b; font-weight: 600; }
+  button.primary:hover { background: #ffc98a; }
+  .toggle { display: flex; align-items: center; gap: 6px; }
+  .toggle input { cursor: pointer; }
+  main { display: flex; flex: 1; overflow: hidden; }
+  #editor {
+    width: 380px; min-width: 320px; padding: 14px; background: #252530;
+    display: flex; flex-direction: column; gap: 10px; border-right: 1px solid #3a3a44;
+  }
+  #editor h3 { margin: 0 0 4px 0; font-size: 13px; color: #ffb86b; }
+  #abcInput {
+    flex: 1; background: #1a1a22; color: #e8e8e8; border: 1px solid #3a3a44;
+    padding: 10px; font-family: "SF Mono", Consolas, monospace; font-size: 13px;
+    resize: none; border-radius: 4px; line-height: 1.5;
+  }
+  .syntax-help {
+    font-size: 11px; color: #999; background: #1a1a22; padding: 8px;
+    border-radius: 4px; max-height: 200px; overflow-y: auto; line-height: 1.5;
+  }
+  .syntax-help code { color: #ffb86b; }
+  #scoreArea {
+    flex: 1; overflow: auto; padding: 20px; background: #2a2a33;
+    display: flex; flex-direction: column; align-items: center;
+  }
+  .page-controls {
+    display: flex; gap: 8px; align-items: center; margin-bottom: 12px;
+  }
+  .page-info { font-size: 13px; color: #aaa; min-width: 80px; text-align: center; }
+  .score-page {
+    background: white; color: black; width: 794px; min-height: 1123px;
+    padding: 40px 50px; box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+    margin-bottom: 20px; position: relative;
+  }
+  .score-page svg { width: 100%; height: auto; display: block; }
+  .page-number {
+    position: absolute; bottom: 15px; right: 50px; font-size: 11px; color: #666;
+  }
+  .error-msg {
+    background: #4a2020; color: #ff9999; padding: 10px; border-radius: 4px;
+    font-size: 12px; margin: 10px 0;
+  }
+  @media print {
+    body { background: white; }
+    header, #editor, .page-controls { display: none !important; }
+    main { display: block; }
+    #scoreArea { padding: 0; background: white; overflow: visible; }
+    .score-page { box-shadow: none; margin: 0; page-break-after: always; }
+    .score-page:last-child { page-break-after: auto; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🎸 FretScore</h1>
+  <div class="controls">
+    <select id="instrument">
+      <option value="guitar">Guitar (6 strings)</option>
+      <option value="soprano">Soprano Ukulele (4 strings)</option>
+      <option value="tenor">Tenor Ukulele (4 strings)</option>
+    </select>
+    <select id="tuning"></select>
+    <label class="toggle">
+      <input type="checkbox" id="showStaff" checked> Show Staff
+    </label>
+    <button id="playBtn" class="primary">▶ Play</button>
+    <button id="stopBtn">■ Stop</button>
+    <button id="downloadMidi">⬇ MIDI</button>
+    <button id="downloadScore">⬇ Score PNG</button>
+    <button id="printBtn">🖨 Print / PDF</button>
+  </div>
+</header>
+
+<main>
+  <div id="editor">
+    <h3>ABC Notation</h3>
+    <textarea id="abcInput" spellcheck="false">X:1
+T:Example Tune
+M:4/4
+L:1/4
+K:G
+|: G2 B2 | d2 B2 | A2 G2 | F2 D2 :|
+| G2 B2 | d2 e2 | d2 B2 | A4 |]
+</textarea>
+    <div class="syntax-help">
+      <b>ABC Syntax:</b><br>
+      Notes: <code>C D E F G A B</code> (uppercase = octave 4)<br>
+      Higher octave: <code>c d e</code> (lowercase), <code>c' d''</code> for more<br>
+      Lower octave: <code>C, D,</code> (comma), <code>C,,</code> for more<br>
+      Accidentals: <code>^C</code> sharp, <code>_E</code> flat, <code>=F</code> natural<br>
+      Lengths: <code>C2</code> half, <code>C4</code> whole, <code>C/</code> eighth, <code>C/4</code> sixteenth<br>
+      Chords: <code>[CEG]2</code> (strum together)<br>
+      Bars: <code>|</code> <code>||</code> <code>|]</code> <code>:|</code> <code>|:</code><br>
+      Rests: <code>z</code><br>
+      <b>Techniques:</b><br>
+      <code>!h!</code> hammer-on · <code>!p!</code> pull-off · <code>!s!</code> slide<br>
+      <code>!b!</code> bend · <code>!v!</code> vibrato · <code>!pm!</code> palm mute<br>
+      <code>!lr!</code> let ring · <code>!x!</code> muted note
+    </div>
+  </div>
+  <div id="scoreArea">
+    <div class="page-controls">
+      <button id="prevPage">◀ Prev</button>
+      <span class="page-info" id="pageInfo">Page 1 / 1</span>
+      <button id="nextPage">Next ▶</button>
+    </div>
+    <div id="scoreContainer"></div>
+  </div>
+</main>
+
+<script>
+/* ============================================================
+   TUNINGS (MIDI note numbers)
+   ============================================================ */
+const TUNINGS = {
+  guitar: {
+    'Standard (EADGBE)':   [64, 59, 55, 50, 45, 40], // E4 B3 G3 D3 A2 E2
+    'Drop D':              [64, 59, 55, 50, 45, 38],
+    'Open G':              [50, 47, 43, 38, 31, 38], // D G D G B D
+    'DADGAD':              [62, 57, 53, 50, 45, 38],
+    'Half-step down':      [63, 58, 54, 49, 44, 39]
+  },
+  soprano: {
+    'Standard (gCEA high-G)': [67, 60, 64, 71], // A4 E4 C4 G4
+    'Low G':                  [55, 60, 64, 67],
+    'D tuning (ADF#B)':       [71, 66, 62, 69],
+    'Slack-key (GCEG)':       [67, 60, 64, 67]
+  },
+  tenor: {
+    'Standard (gCEA high-G)': [67, 60, 64, 71],
+    'Low G':                  [55, 60, 64, 67],
+    'Baritone (DGBE)':        [62, 59, 55, 50],
+    'D tuning (ADF#B)':       [71, 66, 62, 69]
+  }
+};
+
+/* ============================================================
+   ABC PARSER
+   ============================================================ */
+class ABCParser {
+  constructor() {
+    this.reset();
+  }
+  reset() {
+    this.header = { title:'', meter:'4/4', unitNote:'1/4', key:'C', tempo:120 };
+    this.events = [];
+  }
+  parse(text) {
+    this.reset();
+    const lines = text.split('\n');
+    let body = '';
+    for (const line of lines) {
+      const l = line.trim();
+      if (!l || l.startsWith('%')) continue;
+      const m = l.match(/^([A-Za-z]):\s*(.*)$/);
+      if (m) {
+        const tag = m[1].toUpperCase();
+        const val = m[2].trim();
+        if (tag === 'T') this.header.title = val;
+        else if (tag === 'M') this.header.meter = val;
+        else if (tag === 'L') this.header.unitNote = val;
+        else if (tag === 'K') this.header.key = val.split(/\s/)[0];
+        else if (tag === 'Q') {
+          const qm = val.match(/(\d+)/);
+          if (qm) this.header.tempo = parseInt(qm[1]);
+        }
+        else if (tag === 'X') { /* ignore */ }
+      } else {
+        body += l + ' ';
+      }
+    }
+    this.parseBody(body);
+    return { header: this.header, events: this.events };
+  }
+  parseBody(body) {
+    let i = 0;
+    const len = body.length;
+    const keySig = this.getKeySignature(this.header.key);
+    let currentAccidentals = {};
+    let inChord = false;
+    let chordNotes = [];
+    let pendingDecorations = [];
+
+    while (i < len) {
+      const c = body[i];
+      if (c === ' ') { i++; continue; }
+      if (c === '[') {
+        inChord = true; chordNotes = []; i++; continue;
+      }
+      if (c === ']') {
+        if (inChord) {
+          const dur = this.parseDuration(body, i+1, {nextI: i+1});
+          i = dur.nextI;
+          for (const n of chordNotes) {
+            this.events.push({ ...n, duration: dur.value, decorations: pendingDecorations, isChord: true });
+          }
+          pendingDecorations = [];
+          inChord = false;
+        } else { i++; }
+        continue;
+      }
+      if (c === '!') {
+        const end = body.indexOf('!', i+1);
+        if (end > 0) {
+          pendingDecorations.push(body.substring(i+1, end));
+          i = end + 1;
+        } else i++;
+        continue;
+      }
+      if (c === '|' || c === ':' || c === '[') {
+        // barlines
+        let bar = c; i++;
+        while (i < len && (body[i] === '|' || body[i] === ':' || body[i] === '[' || body[i] === ']')) {
+          bar += body[i]; i++;
+        }
+        this.events.push({ type: 'bar', value: bar });
+        currentAccidentals = {};
+        continue;
+      }
+      // note or rest
+      const note = this.parseNote(body, i, keySig, currentAccidentals);
+      if (note) {
+        if (inChord) {
+          chordNotes.push({ ...note, duration: 0, decorations: [...pendingDecorations] });
+          pendingDecorations = [];
+        } else {
+          const dur = this.parseDuration(body, note.nextI, {nextI: note.nextI});
+          this.events.push({ ...note, duration: dur.value, decorations: pendingDecorations });
+          pendingDecorations = [];
+          i = dur.nextI;
+          continue;
+        }
+      }
+      i = note ? note.nextI : i + 1;
+    }
+  }
+  parseNote(body, i, keySig, currentAcc) {
+    const c = body[i];
+    if (c === 'z' || c === 'Z') {
+      return { type:'rest', pitch:null, nextI: i+1 };
+    }
+    const letter = c.toUpperCase();
+    if (!'ABCDEFG'.includes(letter)) return null;
+    let acc = null;
+    let j = i + 1;
+    // check accidental before note
+    if (i > 0) {
+      const prev = body[i-1];
+      if (prev === '^') { acc = 1; j = i + 1; }
+      else if (prev === '_') { acc = -1; j = i + 1; }
+      else if (prev === '=') { acc = 0; j = i + 1; }
+    }
+    // octave
+    let octave = 4;
+    if (c >= 'a' && c <= 'g') octave = 5;
+    while (j < body.length && body[j] === "'") { octave++; j++; }
+    while (j < body.length && body[j] === ',') { octave--; j++; }
+    // apply key signature if no accidental
+    if (acc === null) {
+      acc = currentAcc[letter] !== undefined ? currentAcc[letter] : (keySig[letter] || 0);
+    } else {
+      currentAcc[letter] = acc;
+    }
+    const pitch = this.letterToMidi(letter, octave) + acc;
+    return { type:'note', letter, octave, accidental: acc, pitch, nextI: j };
+  }
+  parseDuration(body, i, state) {
+    // parse numerator/denominator
+    let num = '', den = '';
+    let j = i;
+    while (j < body.length && /\d/.test(body[j])) { num += body[j]; j++; }
+    if (j < body.length && body[j] === '/') {
+      j++;
+      while (j < body.length && /\d/.test(body[j])) { den += body[j]; j++; }
+      if (!den) den = '2';
+    }
+    const baseUnit = this.parseFraction(this.header.unitNote);
+    let n = num ? parseInt(num) : 1;
+    let d = den ? parseInt(den) : 1;
+    let value;
+    if (den) {
+      value = (n / d) * baseUnit;
+    } else {
+      value = n * baseUnit;
+    }
+    return { value, nextI: j };
+  }
+  parseFraction(s) {
+    const m = s.match(/(\d+)\/(\d+)/);
+    if (m) return parseInt(m[1]) / parseInt(m[2]);
+    return 1;
+  }
+  letterToMidi(letter, octave) {
+    const map = { C:0, D:2, E:4, F:5, G:7, A:9, B:11 };
+    return (octave + 1) * 12 + map[letter];
+  }
+  getKeySignature(key) {
+    const k = key.replace(/\s*g$/i, '').toUpperCase();
+    const sharps = { C:0, G:1, D:2, A:3, E:4, B:5, 'F#':6, 'C#':7 };
+    const flats  = { C:0, F:1, '_B':2, '_E':3, '_A':4, '_D':5, '_G':6, '_C':7 };
+    // simplified
+    const sharpNotes = ['F','C','G','D','A','E','B'];
+    const flatNotes  = ['B','E','A','D','G','C','F'];
+    const result = {};
+    if (sharps[k] !== undefined) {
+      for (let i = 0; i < sharps[k]; i++) result[sharpNotes[i]] = 1;
+    } else if (flats[k] !== undefined) {
+      for (let i = 0; i < flats[k]; i++) result[flatNotes[i]] = -1;
+    } else if (k.includes('M')) {
+      // minor
+      const minorRoot = k.replace('M','');
+      // map to relative major
+      const minorToMajor = { 'A':'C','E':'G','B':'D','F#':'A','C#':'E','G#':'B','D':'F','G':'_B','C':'_E','F':'_A' };
+      const maj = minorToMajor[minorRoot];
+      if (maj) return this.getKeySignature(maj);
+    }
+    return result;
+  }
+}
+
+/* ============================================================
+   TABLATURE CONVERTER
+   ============================================================ */
+class TabConverter {
+  constructor(tuning) {
+    // tuning: array of MIDI pitches, highest first (string 1 -> string N)
+    this.tuning = tuning;
+    this.numStrings = tuning.length;
+  }
+  findFret(pitch) {
+    // returns {string, fret} or null
+    let best = null;
+    for (let s = 0; s < this.numStrings; s++) {
+      const open = this.tuning[s];
+      const fret = pitch - open;
+      if (fret >= 0 && fret <= 24) {
+        if (best === null || fret < best.fret) {
+          best = { string: s + 1, fret };
+        }
+      }
+    }
+    return best;
+  }
+}
+
+/* ============================================================
+   SCORE RENDERER (SVG)
+   ============================================================ */
+class ScoreRenderer {
+  constructor(options) {
+    this.showStaff = options.showStaff;
+    this.numStrings = options.numStrings;
+    this.pageWidth = 694; // A4 minus margins
+    this.pageHeight = 1043;
+    this.systemSpacing = this.showStaff ? 90 : 60;
+    this.tabLineSpacing = 10;
+    this.staffLineSpacing = 8;
+  }
+  render(parsed, tuning) {
+    const tab = new TabConverter(tuning);
+    const events = parsed.events.filter(e => e.type !== 'bar' || e.value === '|');
+    // layout: group events into systems
+    const systems = this.layoutSystems(events, tab, parsed.header);
+    const pages = this.paginate(systems, parsed.header);
+    return pages;
+  }
+  layoutSystems(events, tab, header) {
+    const systems = [];
+    let current = [];
+    let x = 60;
+    const startX = 60;
+    const maxW = this.pageWidth - 40;
+    for (const ev of events) {
+      if (ev.type === 'bar') {
+        current.push({ ...ev, x });
+        x += 12;
+        if (x > maxW - 40) {
+          systems.push({ events: current, startX, endX: x });
+          current = [];
+          x = startX;
+        }
+        continue;
+      }
+      const w = this.eventWidth(ev);
+      if (x + w > maxW - 40 && current.length > 0) {
+        systems.push({ events: current, startX, endX: x });
+        current = [];
+        x = startX;
+      }
+      current.push({ ...ev, x });
+      x += w;
+    }
+    if (current.length > 0) systems.push({ events: current, startX, endX: x });
+    return systems;
+  }
+  eventWidth(ev) {
+    if (ev.type === 'bar') return 12;
+    if (ev.type === 'rest') return 28;
+    const dur = ev.duration || 0.25;
+    // scale width by duration (log-ish)
+    return Math.max(24, 20 + dur * 40);
+  }
+  paginate(systems, header) {
+    const pages = [];
+    let currentPage = [];
+    let y = 80;
+    const pageBottom = this.pageHeight - 40;
+    // title
+    const titleY = y;
+    y += 40;
+    for (const sys of systems) {
+      if (y + this.systemSpacing > pageBottom) {
+        pages.push({ systems: currentPage, titleY: pages.length === 0 ? titleY : null });
+        currentPage = [];
+        y = 60;
+      }
+      sys.y = y;
+      currentPage.push(sys);
+      y += this.systemSpacing;
+    }
+    if (currentPage.length > 0) {
+      pages.push({ systems: currentPage, titleY: pages.length === 0 ? titleY : null });
+    }
+    return { pages, header };
+  }
+  renderPageSVG(pageData, pageNum, totalPages) {
+    const { systems, header, titleY } = pageData;
+    const svgW = this.pageWidth;
+    const svgH = this.pageHeight;
+    let svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${svgW} ${svgH}" width="${svgW}" height="${svgH}" font-family="serif">`;
+    // Title
+    if (titleY !== null && header.title) {
+      svg += `<text x="${svgW/2}" y="${titleY}" text-anchor="middle" font-size="20" font-weight="bold">${this.escape(header.title)}</text>`;
+    }
+    // Systems
+    for (const sys of systems) {
+      svg += this.renderSystem(sys, header);
+    }
+    svg += `</svg>`;
+    return svg;
+  }
+  renderSystem(sys, header) {
+    let s = '';
+    const x1 = sys.startX;
+    const x2 = sys.endX;
+    const y = sys.y;
+    const tabTop = y + (this.showStaff ? 40 : 0);
+    const tabBottom = tabTop + (this.numStrings - 1) * this.tabLineSpacing;
+    // Tablature lines
+    for (let i = 0; i < this.numStrings; i++) {
+      const ly = tabTop + i * this.tabLineSpacing;
+      s += `<line x1="${x1}" y1="${ly}" x2="${x2}" y2="${ly}" stroke="black" stroke-width="0.7"/>`;
+    }
+    // Staff (if enabled)
+    if (this.showStaff) {
+      const staffTop = y;
+      for (let i = 0; i < 5; i++) {
+        const ly = staffTop + i * this.staffLineSpacing;
+        s += `<line x1="${x1}" y1="${ly}" x2="${x2}" y2="${ly}" stroke="black" stroke-width="0.7"/>`;
+      }
+      // Treble clef symbol
+      s += `<text x="${x1 - 4}" y="${staffTop + 32}" font-size="38" font-family="serif">𝄞</text>`;
+    }
+    // Left bracket connecting staff and tab
+    if (this.showStaff) {
+      s += `<line x1="${x1}" y1="${y}" x2="${x1}" y2="${tabBottom}" stroke="black" stroke-width="1.5"/>`;
+    } else {
+      s += `<line x1="${x1}" y1="${tabTop}" x2="${x1}" y2="${tabBottom}" stroke="black" stroke-width="1.5"/>`;
+    }
+    // String labels on left
+    const stringLabels = this.numStrings === 6 ? ['e','B','G','D','A','E'] :
+                          this.numStrings === 4 ? this.getStringLabels() : [];
+    for (let i = 0; i < this.numStrings; i++) {
+      const ly = tabTop + i * this.tabLineSpacing;
+      s += `<text x="${x1 - 14}" y="${ly + 4}" font-size="11" text-anchor="middle" font-style="italic">${stringLabels[i]}</text>`;
+    }
+    // Events
+    for (const ev of sys.events) {
+      if (ev.type === 'bar') {
+        s += this.renderBarline(ev.x, y, tabBottom, ev.value);
+      } else if (ev.type === 'rest') {
+        s += this.renderRest(ev, tabTop);
+      } else if (ev.type === 'note') {
+        s += this.renderNote(ev, tabTop, y);
+      }
+    }
+    return s;
+  }
+  getStringLabels() {
+    // based on standard uke tuning (high G)
+    return ['A','E','C','G'];
+  }
+  renderBarline(x, yTop, yBottom, type) {
+    let s = '';
+    if (type.includes(':')) {
+      // dots
+      const cy = (yTop + yBottom) / 2;
+      s += `<circle cx="${x-4}" cy="${cy-6}" r="1.5" fill="black"/>`;
+      s += `<circle cx="${x-4}" cy="${cy+6}" r="1.5" fill="black"/>`;
+    }
+    if (type.includes('|')) {
+      s += `<line x1="${x}" y1="${yTop}" x2="${x}" y2="${yBottom}" stroke="black" stroke-width="1"/>`;
+    }
+    if (type === '||' || type === '|]') {
+      s += `<line x1="${x+3}" y1="${yTop}" x2="${x+3}" y2="${yBottom}" stroke="black" stroke-width="2.5"/>`;
+    }
+    return s;
+  }
+  renderRest(ev, tabTop) {
+    const cy = tabTop + (this.numStrings - 1) * this.tabLineSpacing / 2;
+    const dur = ev.duration || 0.25;
+    let symbol = '𝄾';
+    if (dur >= 1) symbol = '𝄻';
+    else if (dur >= 0.5) symbol = '𝄼';
+    else if (dur >= 0.25) symbol = '𝄽';
+    else symbol = '𝄾';
+    return `<text x="${ev.x}" y="${cy + 5}" font-size="20" text-anchor="middle">${symbol}</text>`;
+  }
+  renderNote(ev, tabTop, staffTop) {
+    let s = '';
+    // We don't have tuning context here, so we render pitch as fret placeholder
+    // Actually we need the fret - we'll compute it in render()
+    // For now, render pitch number on tab and notehead on staff
+    const fret = ev.fret !== undefined ? ev.fret : '?';
+    const stringIdx = ev.string !== undefined ? ev.string - 1 : 0;
+    const tabY = tabTop + stringIdx * this.tabLineSpacing;
+    // fret number background
+    s += `<rect x="${ev.x - 7}" y="${tabY - 7}" width="14" height="14" fill="white"/>`;
+    s += `<text x="${ev.x}" y="${tabY + 4}" font-size="11" font-weight="bold" text-anchor="middle" font-family="sans-serif">${fret}</text>`;
+    // Stem + notehead on staff
+    if (this.showStaff && ev.staffY !== undefined) {
+      const ny = ev.staffY;
+      s += `<ellipse cx="${ev.x}" cy="${ny}" rx="4.5" ry="3.2" fill="black" transform="rotate(-20 ${ev.x} ${ny})"/>`;
+      s += `<line x1="${ev.x + 4}" y1="${ny}" x2="${ev.x + 4}" y2="${ny - 22}" stroke="black" stroke-width="1"/>`;
+      // flags for short notes
+      const dur = ev.duration || 0.25;
+      if (dur <= 0.25) {
+        s += `<path d="M ${ev.x+4} ${ny-22} q 6 4 4 12" stroke="black" fill="none" stroke-width="1.2"/>`;
+      }
+      if (dur <= 0.125) {
+        s += `<path d="M ${ev.x+4} ${ny-17} q 6 4 4 12" stroke="black" fill="none" stroke-width="1.2"/>`;
+      }
+    }
+    // Decorations
+    if (ev.decorations && ev.decorations.length > 0) {
+      const decY = tabTop - 10;
+      const decText = ev.decorations.map(d => this.decorationSymbol(d)).join(' ');
+      s += `<text x="${ev.x}" y="${decY}" font-size="9" text-anchor="middle" fill="#666">${decText}</text>`;
+    }
+    return s;
+  }
+  decorationSymbol(d) {
+    const map = {
+      'h': 'H', 'p': 'P', 's': 'S', 'b': 'B',
+      'v': 'vib', 'pm': 'P.M.', 'lr': 'let', 'x': '×'
+    };
+    return map[d] || d;
+  }
+  escape(s) {
+    return String(s).replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
+  }
+}
+
+/* ============================================================
+   ENHANCED RENDERER — integrates tuning + fret calculation
+   ============================================================ */
+function buildScore(parsed, tuning, showStaff) {
+  const numStrings = tuning.length;
+  const tab = new TabConverter(tuning);
+  // Compute frets and staff Y for each note
+  const events = parsed.events;
+  for (const ev of events) {
+    if (ev.type === 'note' && ev.pitch !== null) {
+      const f = tab.findFret(ev.pitch);
+      if (f) {
+        ev.string = f.string;
+        ev.fret = f.fret;
+      } else {
+        ev.string = 1; ev.fret = 0;
+      }
+      // staff Y: guitar sounds octave lower than written
+      // For uke, at concert pitch
+      ev.staffY = pitchToStaffY(ev.pitch);
+    }
+  }
+  const renderer = new ScoreRenderer({ showStaff, numStrings });
+  return renderer.render(parsed, tuning);
+}
+function pitchToStaffY(midiPitch) {
+  // Map MIDI pitch to staff Y position
+  // Staff top line (F5) = y=0, bottom line (E4) = y=32, spacing=8
+  // Each line/space = 4 units
+  // Standard treble clef: top line F5, then D5, B4, G4, E4
+  // Note: guitar sounds octave lower than written — we display as written
+  const staffTop = 0; // F5
+  const lineSpacing = 8;
+  // Map pitch to diatonic position
+  const noteNames = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+  const octave = Math.floor(midiPitch / 12) - 1;
+  const pc = midiPitch % 12;
+  const letter = noteNames[pc].replace('#','');
+  const letterIndex = 'CDEFGAB'.indexOf(letter);
+  // Diatonic position from C4
+  const diatonicFromC4 = (octave - 4) * 7 + letterIndex;
+  // F5 diatonic position: F=3, octave 5 => (5-4)*7 + 3 = 10
+  const f5Diatonic = 10;
+  const diff = f5Diatonic - diatonicFromC4;
+  // Each diatonic step = 4 units (half line spacing)
+  return staffTop + diff * 4;
+}
+
+/* ============================================================
+   MIDI PLAYER (Tone.js)
+   ============================================================ */
+let currentSampler = null;
+let scheduledEvents = [];
+async function playScore(parsed, instrument) {
+  await Tone.start();
+  if (currentSampler) {
+    currentSampler.dispose();
+  }
+  const soundUrl = getSoundUrl(instrument);
+  currentSampler = new Tone.Sampler({
+    urls: soundUrl.urls,
+    baseUrl: soundUrl.baseUrl,
+    onload: () => console.log('Loaded:', instrument),
+    onerror: (e) => console.error('Soundfont load error:', e)
+  }).toDestination();
+  currentSampler.volume.value = -6;
+  await Tone.loaded();
+  const bpm = parsed.header.tempo;
+  Tone.getTransport().bpm.value = bpm;
+  const beatDur = 60 / bpm;
+  let t = Tone.now() + 0.1;
+  scheduledEvents = [];
+  for (const ev of parsed.events) {
+    if (ev.type === 'note' && ev.pitch !== null) {
+      const dur = (ev.duration || 0.25) * beatDur * 4; // unit note = 1/4, so multiply by 4 beats
+      const noteName = Tone.Frequency(ev.pitch, "midi").toNote();
+      try {
+        currentSampler.triggerAttackRelease(noteName, dur * 0.9, t);
+      } catch(e) { /* skip */ }
+    } else if (ev.type === 'bar' && ev.value.includes(':|')) {
+      // simple repeat: not implemented fully
+    }
+    if (ev.type === 'note' || ev.type === 'rest') {
+      t += (ev.duration || 0.25) * beatDur * 4;
+    }
+  }
+}
+function stopPlayback() {
+  if (currentSampler) {
+    currentSampler.releaseAll();
+  }
+}
+function getSoundUrl(instrument) {
+  const base = 'https://gleitz.github.io/midi-js-soundfonts/MusyngKite/';
+  if (instrument === 'guitar') {
+    return {
+      baseUrl: base + 'acoustic_guitar_nylon-mp3/',
+      urls: buildNoteMap('mp3')
+    };
+  } else {
+    // Use mandolin or acoustic guitar bright for uke
+    return {
+      baseUrl: base + 'mandolin-mp3/',
+      urls: buildNoteMap('mp3')
+    };
+  }
+}
+function buildNoteMap(ext) {
+  const notes = {};
+  const pitches = ['C','D','E','F','G','A','B'];
+  for (let oct = 2; oct <= 6; oct++) {
+    for (const p of pitches) {
+      notes[`${p}${oct}.${ext}`] = `${p}${oct}.${ext}`;
+    }
+    notes[`As${oct}.${ext}`] = `A${oct}sharp.${ext}`;
+    notes[`Ds${oct}.${ext}`] = `D${oct}sharp.${ext}`;
+    notes[`Fs${oct}.${ext}`] = `F${oct}sharp.${ext}`;
+    notes[`Gs${oct}.${ext}`] = `G${oct}sharp.${ext}`;
+    notes[`Cs${oct}.${ext}`] = `C${oct}sharp.${ext}`;
+  }
+  return notes;
+}
+
+/* ============================================================
+   MIDI FILE GENERATOR
+   ============================================================ */
+function generateMidi(parsed, tuning) {
+  const bytes = [];
+  const push = (...b) => bytes.push(...b);
+  const pushStr = s => { for (const c of s) bytes.push(c.charCodeAt(0)); };
+  const pushVarLen = n => {
+    const buf = [n & 0x7f];
+    n >>= 7;
+    while (n > 0) { buf.unshift((n & 0x7f) | 0x80); n >>= 7; }
+    push(...buf);
+  };
+  // Header
+  pushStr('MThd'); push(0,0,0,6, 0,1, 0,1);
+  const ticksPerBeat = 480;
+  bytes[11] = ticksPerBeat & 0xff; bytes[10] = (ticksPerBeat >> 8) & 0xff;
+  // Track
+  const trackData = [];
+  const tpush = (...b) => trackData.push(...b);
+  const tpushVarLen = n => {
+    const buf = [n & 0x7f];
+    n >>= 7;
+    while (n > 0) { buf.unshift((n & 0x7f) | 0x80); n >>= 7; }
+    tpush(...buf);
+  };
+  // Tempo
+  tpushVarLen(0);
+  const usPerBeat = Math.round(60000000 / parsed.header.tempo);
+  tpush(0xff, 0x51, 0x03, (usPerBeat >> 16) & 0xff, (usPerBeat >> 8) & 0xff, usPerBeat & 0xff);
+  // Program change
+  const program = 25; // acoustic guitar
+  tpushVarLen(0); tpush(0xc0, program);
+  // Notes
+  let currentTick = 0;
+  const beatDurTicks = ticksPerBeat * 4; // unit note = 1/4, 4 beats per whole
+  for (const ev of parsed.events) {
+    if (ev.type === 'note' && ev.pitch !== null) {
+      const durTicks = Math.round((ev.duration || 0.25) * beatDurTicks);
+      tpushVarLen(currentTick === 0 ? 0 : 0); // delta
+      // note on
+      tpush(0x90, ev.pitch, 90);
+      tpushVarLen(durTicks);
+      tpush(0x80, ev.pitch, 0);
+      currentTick = 0;
+    } else if (ev.type === 'note' || ev.type === 'rest') {
+      currentTick += Math.round((ev.duration || 0.25) * beatDurTicks);
+    }
+  }
+  // End of track
+  tpushVarLen(0); tpush(0xff, 0x2f, 0x00);
+  // Write track chunk
+  pushStr('MTrk');
+  const len = trackData.length;
+  push((len >> 24) & 0xff, (len >> 16) & 0xff, (len >> 8) & 0xff, len & 0xff);
+  push(...trackData);
+  return new Uint8Array(bytes);
+}
+
+/* ============================================================
+   APP CONTROLLER
+   ============================================================ */
+let currentPage = 0;
+let totalPages = 1;
+let currentPages = [];
+let currentParsed = null;
+let currentTuning = null;
+
+function getTuning() {
+  const inst = document.getElementById('instrument').value;
+  const tun = document.getElementById('tuning').value;
+  return TUNINGS[inst][tun];
+}
+
+function updateTuningOptions() {
+  const inst = document.getElementById('instrument').value;
+  const sel = document.getElementById('tuning');
+  sel.innerHTML = '';
+  for (const name of Object.keys(TUNINGS[inst])) {
+    const opt = document.createElement('option');
+    opt.value = name; opt.textContent = name;
+    sel.appendChild(opt);
+  }
+}
+
+function renderScore() {
+  const text = document.getElementById('abcInput').value;
+  const parser = new ABCParser();
+  try {
+    currentParsed = parser.parse(text);
+  } catch (e) {
+    document.getElementById('scoreContainer').innerHTML =
+      `<div class="error-msg">Parse error: ${e.message}</div>`;
+    return;
+  }
+  currentTuning = getTuning();
+  const showStaff = document.getElementById('showStaff').checked;
+  const result = buildScore(currentParsed, currentTuning, showStaff);
+  currentPages = result.pages;
+  totalPages = currentPages.length;
+  if (currentPage >= totalPages) currentPage = Math.max(0, totalPages - 1);
+  renderCurrentPage();
+}
+
+function renderCurrentPage() {
+  const container = document.getElementById('scoreContainer');
+  container.innerHTML = '';
+  if (currentPages.length === 0) {
+    container.innerHTML = '<div class="error-msg">No content to display.</div>';
+    updatePageInfo();
+    return;
+  }
+  const page = currentPages[currentPage];
+  const div = document.createElement('div');
+  div.className = 'score-page';
+  div.id = 'activePage';
+  const renderer = new ScoreRenderer({
+    showStaff: document.getElementById('showStaff').checked,
+    numStrings: currentTuning.length
+  });
+  div.innerHTML = renderer.renderPageSVG(page, currentPage + 1, totalPages);
+  const pn = document.createElement('div');
+  pn.className = 'page-number';
+  pn.textContent = `Page ${currentPage + 1} of ${totalPages}`;
+  div.appendChild(pn);
+  container.appendChild(div);
+  updatePageInfo();
+}
+
+function updatePageInfo() {
+  document.getElementById('pageInfo').textContent = `Page ${currentPage + 1} / ${totalPages}`;
+}
+
+function renderAllPagesForExport() {
+  // Temporarily render all pages for PNG export
+  const container = document.getElementById('scoreContainer');
+  container.innerHTML = '';
+  const renderer = new ScoreRenderer({
+    showStaff: document.getElementById('showStaff').checked,
+    numStrings: currentTuning.length
+  });
+  const pages = [];
+  for (let i = 0; i < currentPages.length; i++) {
+    const div = document.createElement('div');
+    div.className = 'score-page';
+    div.innerHTML = renderer.renderPageSVG(currentPages[i], i+1, totalPages);
+    container.appendChild(div);
+    pages.push(div);
+  }
+  return pages;
+}
+
+/* Event handlers */
+document.getElementById('instrument').addEventListener('change', () => {
+  updateTuningOptions();
+  renderScore();
+});
+document.getElementById('tuning').addEventListener('change', renderScore);
+document.getElementById('showStaff').addEventListener('change', renderScore);
+document.getElementById('abcInput').addEventListener('input', debounce(renderScore, 500));
+document.getElementById('prevPage').addEventListener('click', () => {
+  if (currentPage > 0) { currentPage--; renderCurrentPage(); }
+});
+document.getElementById('nextPage').addEventListener('click', () => {
+  if (currentPage < totalPages - 1) { currentPage++; renderCurrentPage(); }
+});
+document.getElementById('playBtn').addEventListener('click', async () => {
+  if (!currentParsed) renderScore();
+  const inst = document.getElementById('instrument').value;
+  await playScore(currentParsed, inst);
+});
+document.getElementById('stopBtn').addEventListener('click', stopPlayback);
+document.getElementById('downloadMidi').addEventListener('click', () => {
+  if (!currentParsed) renderScore();
+  const data = generateMidi(currentParsed, currentTuning);
+  const blob = new Blob([data], { type: 'audio/midi' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = (currentParsed.header.title || 'score') + '.mid';
+  a.click();
+  URL.revokeObjectURL(url);
+});
+document.getElementById('downloadScore').addEventListener('click', async () => {
+  // Render all pages, convert to PNG via canvas
+  const savedPage = currentPage;
+  const pages = renderAllPagesForExport();
+  // Use first page for now (could do multi-page)
+  const page = pages[0];
+  const svg = page.querySelector('svg');
+  const svgData = new XMLSerializer().serializeToString(svg);
+  const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+  const url = URL.createObjectURL(svgBlob);
+  const img = new Image();
+  img.onload = () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 794 * 2; canvas.height = 1123 * 2;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = 'white';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    canvas.toBlob(blob => {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = (currentParsed.header.title || 'score') + '.png';
+      a.click();
+      // Restore single page view
+      currentPage = savedPage;
+      renderCurrentPage();
+    });
+    URL.revokeObjectURL(url);
+  };
+  img.src = url;
+});
+document.getElementById('printBtn').addEventListener('click', () => {
+  // Render all pages for print
+  renderAllPagesForExport();
+  setTimeout(() => window.print(), 100);
+});
+
+function debounce(fn, ms) {
+  let t; return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
+}
+
+// Init
+updateTuningOptions();
+renderScore();
+</script>
+</body>
+</html>
